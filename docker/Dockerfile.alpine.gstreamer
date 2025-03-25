@@ -1,0 +1,39 @@
+FROM alpine:3.18
+
+RUN apk add --no-cache \
+    python3=3.10.13-r0 \
+    py3-pip \
+    ffmpeg \
+    gstreamer \
+    gst-plugins-base \
+    gst-plugins-good \
+    gst-plugins-bad \
+    gst-plugins-ugly \
+    gst-libav \
+    gst-python \
+    python3-dev \
+    build-base \
+    vim \
+    screen \
+    bash \
+    gcc \
+    musl-dev \
+    libffi-dev
+
+RUN ln -sf python3 /usr/bin/python && \
+    python -m ensurepip && \
+    pip3 install --no-cache --upgrade pip setuptools
+
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY src/ /app/src/
+COPY tests/ /app/tests/
+RUN mkdir -p /app/tmp/
+
+ENV GST_PLUGIN_PATH=/app/src/gst_plugins/ PYTHONPATH=/app/src/
+WORKDIR /app
+
+RUN echo 'python3 -c "print(\"\\n\\nHello from vipipe!\\n\\n\")"' >> /etc/profile
+
+RUN apk del --purge build-base gcc musl-dev libffi-dev

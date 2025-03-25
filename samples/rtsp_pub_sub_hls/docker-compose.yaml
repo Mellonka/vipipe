@@ -1,0 +1,28 @@
+services:
+  publisher:
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ubuntu.gstreamer
+    command: >
+      python3 -u src/scripts/rtsp_pub.py 
+        --rtsp_address rtsp://admin:admin@192.168.0.151:8554/live 
+        --pub_address ipc:///tmp/zeromq_sockets/rtsp_test.ipc
+    volumes:
+      - zeromq_sockets:/tmp/zeromq_sockets
+    network_mode: host
+
+  subscriber:
+    build: 
+      context: ../../
+      dockerfile: docker/Dockerfile.ubuntu.gstreamer
+    command: >
+      python3 -u src/scripts/test_sub.py 
+        --sub_address ipc:///tmp/zeromq_sockets/rtsp_test.ipc 
+        --hls_name rtsp_test
+    ports:
+      - 8081:8081
+    volumes:
+      - zeromq_sockets:/tmp/zeromq_sockets
+
+volumes:
+  zeromq_sockets:
