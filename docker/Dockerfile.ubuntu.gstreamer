@@ -3,7 +3,11 @@ FROM ubuntu:22.04
 # Избегаем интерактивных запросов при установке пакетов
 ENV DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y ffmpeg
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    vim \
+    screen \
+    ffmpeg
 
 RUN apt-get update && apt-get install -y \
     python3 \
@@ -20,22 +24,17 @@ RUN apt-get update && apt-get install -y \
     gstreamer1.0-python3-plugin-loader \
     python3-gst-1.0 
 
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    vim \
-    screen
-
 RUN rm -rf /var/lib/apt/lists/* 
 
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
 
 COPY src/ /app/src/
-COPY tests/ app/tests/
-RUN mkdir /app/tmp/
-
-ENV GST_PLUGIN_PATH=/app/src/gst_plugins/ PYTHONPATH=/app/src/ PYTHONUNBUFFERED=1
-
 WORKDIR /app
+
+ENV GST_PLUGIN_PATH=/app/src/gst_plugins/ \
+    GST_DEBUG=2 \
+    PYTHONPATH=/app/src/ \
+    PYTHONUNBUFFERED=1
 
 RUN echo 'python3 -c "print(\"\\n\\nHello from vipipe!\\n\\n\")"' >> /etc/bash.bashrc

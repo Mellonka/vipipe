@@ -1,28 +1,60 @@
 services:
   publisher:
+    container_name: publisher
     build:
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
-      python3 -u src/scripts/rtsp_pub.py 
-        --rtsp_address rtsp://admin:admin@192.168.0.151:8554/live 
-        --pub_address ipc:///tmp/zeromq_sockets/rtsp_test.ipc
+      gst-launch-1.0 
+        rtspsrc 
+            location=rtsp://admin:admin@192.168.0.156:8554/live  
+            latency=0 
+        ! rtph264depay
+        ! h264parse
+        ! avdec_h264
+        ! videoconvert
+        ! zmqsink 
+            address=ipc:///tmp/zmq_sockets/rtsp_test.ipc
+    restart: always
     volumes:
-      - zeromq_sockets:/tmp/zeromq_sockets
+      - zmq_sockets:/tmp/zmq_sockets
     network_mode: host
 
   subscriber:
+    container_name: subscriber
     build: 
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
-      python3 -u src/scripts/test_sub.py 
-        --sub_address ipc:///tmp/zeromq_sockets/rtsp_test.ipc 
-        --hls_name rtsp_test
+      gst-launch-1.0
+        zmqsrc 
+            address=ipc:///tmp/zmq_sockets/rtsp_test.ipc
+            recv-timeout=60000
+        ! videoconvert 
+        ! x264enc
+        ! hlssink2 
+            playlist-root=http://localhost:8081/
+            max-files=2
+            playlist-length=2
+            target-duration=2 
+            location=/app/rtsp_test/segment_%05d.ts
+            playlist-location=/app/rtsp_test/playlist.m3u8
+    volumes:
+      - zmq_sockets:/tmp/zmq_sockets
+      - rtsp_test:/app/rtsp_test
+
+  sserver:
+    container_name: sserver
+    build:
+      context: ../../
+      dockerfile: docker/Dockerfile.ubuntu.gstreamer
+    command: >
+      /bin/bash -c "cd /app/rtsp_test && python3 -u /app/src/scripts/sserver.py --port 8081"
     ports:
       - 8081:8081
     volumes:
-      - zeromq_sockets:/tmp/zeromq_sockets
+      - rtsp_test:/app/rtsp_test
 
 volumes:
-  zeromq_sockets:
+  rtsp_test:
+  zmq_sockets:

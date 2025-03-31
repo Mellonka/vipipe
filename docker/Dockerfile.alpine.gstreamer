@@ -1,9 +1,11 @@
-FROM alpine:3.18
+FROM alpine:latest
 
+# Установка всех необходимых пакетов
 RUN apk add --no-cache \
-    python3=3.10.13-r0 \
-    py3-pip \
     ffmpeg \
+    python3 \
+    py3-pip \
+    python3-dev \
     gstreamer \
     gst-plugins-base \
     gst-plugins-good \
@@ -11,29 +13,33 @@ RUN apk add --no-cache \
     gst-plugins-ugly \
     gst-libav \
     gst-python \
-    python3-dev \
+    gstreamer-dev \
+    cairo-dev \
+    pkgconfig \
     build-base \
     vim \
-    screen \
-    bash \
-    gcc \
-    musl-dev \
-    libffi-dev
+    screen
 
-RUN ln -sf python3 /usr/bin/python && \
-    python -m ensurepip && \
-    pip3 install --no-cache --upgrade pip setuptools
+# Создание и активация виртуального окружения
+RUN python3 -m venv /.venv
+ENV PATH="/.venv/bin:$PATH"
 
+# Копирование файлов и установка зависимостей Python
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ /app/src/
-COPY tests/ /app/tests/
-RUN mkdir -p /app/tmp/
-
-ENV GST_PLUGIN_PATH=/app/src/gst_plugins/ PYTHONPATH=/app/src/
 WORKDIR /app
 
+# Добавляем системный путь к библиотекам Python для GStreamer
+ENV GST_PLUGIN_PATH=/app/src/gst_plugins/:/usr/lib/gstreamer-1.0/ \
+    GST_DEBUG=2 \
+    PYTHONPATH=/app/src/:/usr/lib/python3.*/site-packages \
+    PYTHONUNBUFFERED=1 \
+    LD_LIBRARY_PATH=/usr/lib
+
+# Добавление приветственного сообщения
 RUN echo 'python3 -c "print(\"\\n\\nHello from vipipe!\\n\\n\")"' >> /etc/profile
 
-RUN apk del --purge build-base gcc musl-dev libffi-dev
+# Для отладки GStreamer
+RUN echo "export GST_DEBUG=3" >> /etc/profile
