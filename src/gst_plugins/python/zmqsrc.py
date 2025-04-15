@@ -1,15 +1,13 @@
-import json
 import logging
-import time
 
 import gi
-from vipipe.zeromq.message import ZeroMQMessage
+import zmq
+from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, BufferMessage, GstReader
+from vipipe.transport.zeromq import ZeroMQReader, ZeroMQReaderConfig
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstBase", "1.0")
-import zmq
 from gi.repository import GLib, GObject, Gst, GstBase  # type: ignore
-from vipipe.zeromq.reader import ZeroMQReader
 
 Gst.init(None)
 
@@ -44,7 +42,7 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             "Maximum number of messages in the queue",
             1,
             GLib.MAXINT,
-            50,  # Default
+            10,  # Default
             GObject.ParamFlags.READWRITE,
         ),
         "buffer-size-oc": (
@@ -53,10 +51,10 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             "Size of the OS buffer in bytes",
             1,
             GLib.MAXINT,
-            1024 * 1024 * 10,  # Default 10MB
+            1024 * 1024 * 30,  # Default 10MB
             GObject.ParamFlags.READWRITE,
         ),
-        "recv-timeout": (
+        "read-timeout": (
             int,
             "Send Timeout",
             "Maximum wait time (ms) for receive operation",
@@ -87,9 +85,9 @@ class GstZeroMQSrc(GstBase.BaseSrc):
         self.set_live(True)
 
         self.address = ""
-        self.buffer_length = 50
-        self.buffer_size_oc = 1024 * 1024 * 10
-        self.recv_timeout = 5000
+        self.buffer_length = 10
+        self.buffer_size_oc = 1024 * 1024 * 30
+        self.read_timeout = 5000
         self.conflate = False
         self.dontwait = False
 
@@ -114,8 +112,8 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             return self.buffer_length
         elif prop.name == "buffer-size-oc":
             return self.buffer_size_oc
-        elif prop.name == "recv-timeout":
-            return self.recv_timeout
+        elif prop.name == "read-timeout":
+            return self.read_timeout
         elif prop.name == "conflate":
             return self.conflate
         elif prop.name == "dontwait":
@@ -130,8 +128,8 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             self.buffer_length = value
         elif prop.name == "buffer-size-oc":
             self.buffer_size_oc = value
-        elif prop.name == "recv-timeout":
-            self.recv_timeout = value
+        elif prop.name == "read-timeout":
+            self.read_timeout = value
         elif prop.name == "conflate":
             self.conflate = value
         elif prop.name == "dontwait":
@@ -143,13 +141,17 @@ class GstZeroMQSrc(GstBase.BaseSrc):
         if self.reader:
             self.reader.stop()
 
-        self.reader = ZeroMQReader(
-            address=self.address,
-            socket_type=zmq.SocketType.SUB,
-            buffer_length=self.buffer_length,
-            buffer_size_oc=self.buffer_size_oc,
-            recv_timeout=self.recv_timeout,
-            conflate=self.conflate,
+        self.reader = GstReader(
+            ZeroMQReader(
+                ZeroMQReaderConfig(
+                    address=self.address,
+                    socket_type=zmq.SocketType.SUB,
+                    buffer_length=self.buffer_length,
+                    buffer_size_oc=self.buffer_size_oc,
+                    read_timeout=self.read_timeout,
+                    conflate=self.conflate,
+                )
+            )
         )
 
         try:
@@ -170,10 +172,17 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             return False
         return True
 
-    def _parse_caps(self, caps):
+    def _parse_caps(self, caps_str: str):
         """Извлекает информацию из GstCaps"""
+
+        if self.caps_str == caps_str:
+            return
+
+        self.caps_str = caps_str
+
+        caps = Gst.Caps.from_string(caps_str)
+        self.srcpad.push_event(Gst.Event.new_caps(caps))
         structure = caps.get_structure(0)
-        self.caps_str = caps.to_string()
 
         if structure.has_field("format"):
             self.format = structure.get_string("format")
@@ -188,38 +197,29 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             _, fps_n, fps_d = structure.get_fraction("framerate")
             self.fps_n = fps_n
             self.fps_d = fps_d
-            self.framerate = float(fps_n) / float(fps_d)
+            self.framerate = f"{fps_n}/{fps_d}"
 
-    def handle_caps_message(self, message: ZeroMQMessage):
-        caps_info_json = message.data[0].decode()
-        caps_info = json.loads(caps_info_json)
-        caps = Gst.Caps.from_string(caps_info["caps"])
-        self._parse_caps(caps)
-        self.srcpad.push_event(Gst.Event.new_caps(caps))
-        logger.debug("Получили капсы %s", caps.to_string())
+        logger.debug("Получили капсы %s", caps_str)
 
-    def handle_buffer_message(self, message: ZeroMQMessage):
-        buffer_info_json = message.data[0].decode()
-        buffer_info = json.loads(buffer_info_json)
-        buffer_data = message.data[1]
+    def handle_buffer_message(self, message: BufferMessage):
+        logger.debug("Получили буффер размера %d", len(message.buffer))
 
-        buffer = Gst.Buffer.new_allocate(None, len(buffer_data), None)
+        if message.caps_str and message.caps_str != self.caps_str:
+            self._parse_caps(message.caps_str)
+
+        buffer = Gst.Buffer.new_allocate(None, len(message.buffer), None)
         if buffer is None:
             return Gst.FlowReturn.ERROR, None
 
-        if (pts := buffer_info.get("pts")) is not None:
-            buffer.pts = pts
-        if (dts := buffer_info.get("dts")) is not None:
-            buffer.dts = dts
-        if (duration := buffer_info.get("duration")) is not None:
-            buffer.duration = duration
-        if (flags := buffer_info.get("flags")) is not None:
-            buffer.set_flags(Gst.BufferFlags(flags))
+        buffer.pts = message.pts
+        if message.dts is not None:
+            buffer.dts = message.dts
+        if message.duration is not None:
+            buffer.duration = message.duration
+        if message.flags is not None:
+            buffer.set_flags(Gst.BufferFlags(message.flags))
 
-        buffer.fill(0, buffer_data)
-
-        logger.debug("Получили буффер размера %d", len(buffer_data))
-
+        buffer.fill(0, message.buffer)
         return Gst.FlowReturn.OK, buffer
 
     def do_create(self, offset, size, amount):
@@ -231,19 +231,18 @@ class GstZeroMQSrc(GstBase.BaseSrc):
         while True:
             message = self.reader.read()
             if message is None:
-                logger.debug("Не получили сообщение, спим и пробуем снова")
-
-                time.sleep(0.5)
+                logger.debug("Не получили сообщение пробуем снова")
                 continue
 
-            logger.debug("Получили сообщение, тип %s", message.message_type.decode())
-
-            if message.message_type == b"caps":
-                self.handle_caps_message(message)
-            elif message.message_type == b"buffer":
-                return self.handle_buffer_message(message)
-            else:
-                logger.warning("Неизвестный тип сообщения")
+            match message.message_type:
+                case GST_MESSAGE_TYPES.BUFFER:
+                    return self.handle_buffer_message(message)  # type: ignore
+                case GST_MESSAGE_TYPES.CAPS:
+                    self._parse_caps(message.caps_str)  # type: ignore
+                case GST_MESSAGE_TYPES.EOS:
+                    return Gst.FlowReturn.EOS, None
+                case _:
+                    logger.debug("Неизветсный тип сообщения, пропускаем")
 
 
 # register plugin

@@ -1,6 +1,5 @@
 services:
   publisher:
-    container_name: publisher
     build:
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
@@ -21,7 +20,6 @@ services:
     network_mode: host
 
   subscriber:
-    container_name: subscriber
     build: 
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
@@ -44,7 +42,6 @@ services:
       - rtsp_test:/app/rtsp_test
 
   sserver:
-    container_name: sserver
     build:
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer

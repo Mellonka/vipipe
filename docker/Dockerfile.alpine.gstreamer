@@ -28,6 +28,7 @@ ENV PATH="/.venv/bin:$PATH"
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+COPY media/ /app/media/
 COPY src/ /app/src/
 WORKDIR /app
 

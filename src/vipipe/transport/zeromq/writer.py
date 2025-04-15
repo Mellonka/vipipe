@@ -2,29 +2,43 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 import zmq
-from vipipe.interface.writer import WriterABC
-from vipipe.zeromq.message import ZeroMQMessage
+from vipipe.transport.interface import MultipartWriterABC
 
 
 @dataclass
-class ZeroMQWriter(WriterABC):
+class ZeroMQWriterConfig:
     address: str
     """Адрес сокета"""
+
     socket_type: Literal[zmq.SocketType.PUB, zmq.SocketType.PUSH]
     """Тип публикации (PUB - получат все клиенты, PUSH - равномерное распеределение между клиентами)"""
-    buffer_length: int = 50
+
+    buffer_length: int = 10
     """Максимальное количество сообщений в очереди"""
-    buffer_size_oc: int = 1024 * 1024 * 10
-    """Размер буфера ОС (в байтах). По умолчанию 10 МБ"""
-    send_timeout: int = 100
+
+    buffer_size_oc: int = 1024 * 1024 * 30
+    """Размер буфера ОС (в байтах). По умолчанию 30 МБ"""
+
+    send_timeout: int = 10
     """Максимальное время ожидания (в мс) для операции отправки"""
+
     immediate: bool = True
     """Отправлять сообщения только при активных клиентах"""
+
     conflate: bool = False
     """Сохранять только последнее сообщение в очереди"""
+
     linger: int = 500
-    """Какое время (мс) пытаемся отправить оставшиеся сообщения. 
+    """Какое время (мс) пытаемся отправить оставшиеся сообщения при закрытии сокета. 
     Особенности: 0 — сообщения отбрасываются сразу, -1 — бесконечное ожидание"""
+
+    dontwait: bool = False
+    """Неблокирующая запись. Не ждать если нет готовых данных"""
+
+
+@dataclass
+class ZeroMQWriter(MultipartWriterABC[bytes]):
+    config: ZeroMQWriterConfig
 
     context: zmq.SyncContext | None = field(init=False, default=None)
     socket: zmq.SyncSocket | None = field(init=False, default=None)
@@ -34,16 +48,16 @@ class ZeroMQWriter(WriterABC):
         assert self.socket is None
 
         self.context = zmq.Context()
-        self.socket = self.context.socket(self.socket_type)
+        self.socket = self.context.socket(self.config.socket_type)
 
-        self.socket.setsockopt(zmq.SNDHWM, self.buffer_length)
-        self.socket.setsockopt(zmq.SNDBUF, self.buffer_size_oc)
-        self.socket.setsockopt(zmq.SNDTIMEO, self.send_timeout)
-        self.socket.setsockopt(zmq.IMMEDIATE, self.immediate)
-        self.socket.setsockopt(zmq.CONFLATE, self.conflate)
-        self.socket.setsockopt(zmq.LINGER, self.linger)
+        self.socket.setsockopt(zmq.SNDHWM, self.config.buffer_length)
+        self.socket.setsockopt(zmq.SNDBUF, self.config.buffer_size_oc)
+        self.socket.setsockopt(zmq.SNDTIMEO, self.config.send_timeout)
+        self.socket.setsockopt(zmq.IMMEDIATE, self.config.immediate)
+        self.socket.setsockopt(zmq.CONFLATE, self.config.conflate)
+        self.socket.setsockopt(zmq.LINGER, self.config.linger)
 
-        self.socket.bind(self.address)
+        self.socket.bind(self.config.address)
 
     def stop(self):
         assert self.context is not None
@@ -52,14 +66,7 @@ class ZeroMQWriter(WriterABC):
         self.socket.close()
         self.context.term()
 
-    def write(self, message: ZeroMQMessage) -> None:
+    def write_multipart(self, message_parts: list[bytes]) -> None:
         assert self.socket is not None
 
-        self.socket.send_multipart(
-            [
-                message.topic or b"",
-                message.message_type,
-                *message.data,
-            ],
-            flags=zmq.DONTWAIT if message.dontwait else 0,
-        )
+        self.socket.send_multipart(message_parts, flags=zmq.DONTWAIT if self.config.dontwait else 0)

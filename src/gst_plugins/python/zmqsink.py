@@ -1,14 +1,14 @@
-import json
 import logging
 
 import gi
+import zmq
+from vipipe.transport.gstreamer import BufferMessage, CapsMessage, GstWriter
+from vipipe.transport.zeromq import ZeroMQWriter, ZeroMQWriterConfig
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstBase", "1.0")
-import zmq
+
 from gi.repository import GLib, GObject, Gst, GstBase  # type: ignore
-from vipipe.zeromq.message import ZeroMQMessage
-from vipipe.zeromq.writer import ZeroMQWriter
 
 Gst.init(None)
 
@@ -43,7 +43,7 @@ class GstZeroMQSink(GstBase.BaseSink):
             "Maximum number of messages in the queue",
             1,
             GLib.MAXINT,
-            50,  # Default
+            10,  # Default
             GObject.ParamFlags.READWRITE,
         ),
         "buffer-size-oc": (
@@ -52,7 +52,7 @@ class GstZeroMQSink(GstBase.BaseSink):
             "Size of the OS buffer in bytes",
             1,
             GLib.MAXINT,
-            1024 * 1024 * 10,  # Default 10MB
+            1024 * 1024 * 30,  # Default 10MB
             GObject.ParamFlags.READWRITE,
         ),
         "send-timeout": (
@@ -98,10 +98,11 @@ class GstZeroMQSink(GstBase.BaseSink):
 
     def __init__(self):
         super(GstZeroMQSink, self).__init__()
+        self.set_sync(False)
 
         self.address = ""
-        self.buffer_length = 50
-        self.buffer_size_oc = 1024 * 1024 * 10
+        self.buffer_length = 10
+        self.buffer_size_oc = 1024 * 1024 * 30
         self.send_timeout = 100
         self.immediate = True
         self.conflate = False
@@ -163,15 +164,19 @@ class GstZeroMQSink(GstBase.BaseSink):
         if self.writer:
             self.writer.stop()
 
-        self.writer = ZeroMQWriter(
-            address=self.address,
-            socket_type=zmq.SocketType.PUB,
-            buffer_length=self.buffer_length,
-            buffer_size_oc=self.buffer_size_oc,
-            send_timeout=self.send_timeout,
-            immediate=self.immediate,
-            conflate=self.conflate,
-            linger=self.linger,
+        self.writer = GstWriter(
+            ZeroMQWriter(
+                ZeroMQWriterConfig(
+                    address=self.address,
+                    socket_type=zmq.SocketType.PUB,
+                    buffer_length=self.buffer_length,
+                    buffer_size_oc=self.buffer_size_oc,
+                    send_timeout=self.send_timeout,
+                    immediate=self.immediate,
+                    conflate=self.conflate,
+                    linger=self.linger,
+                )
+            )
         )
 
         try:
@@ -210,31 +215,26 @@ class GstZeroMQSink(GstBase.BaseSink):
             _, fps_n, fps_d = structure.get_fraction("framerate")
             self.fps_n = fps_n
             self.fps_d = fps_d
-            self.framerate = float(fps_n) / float(fps_d)
+            self.framerate = f"{fps_n}/{fps_d}"
 
     def do_set_caps(self, caps):
         if not self.writer:
             raise RuntimeError("Сокет для публикации не инициализирован")
 
         self._parse_caps(caps)
-
-        metadata = {
-            "caps": self.caps_str,
-            "width": self.width,
-            "height": self.height,
-            "format": self.format,
-            "fps_n": self.fps_n,
-            "fps_d": self.fps_d,
-            "framerate": self.framerate,
-        }
+        assert self.caps_str is not None
 
         try:
             self.writer.write(
-                ZeroMQMessage(
-                    None,
-                    b"caps",
-                    [json.dumps(metadata).encode("utf-8")],
-                ),
+                CapsMessage(
+                    width=self.width,  # type: ignore
+                    height=self.height,  # type: ignore
+                    format=self.format,
+                    fps_n=self.fps_n,
+                    fps_d=self.fps_d,
+                    framerate=self.framerate,
+                    caps_str=self.caps_str,
+                )
             )
             logger.debug("Отправили капсы")
         except zmq.Again:
@@ -252,19 +252,18 @@ class GstZeroMQSink(GstBase.BaseSink):
 
         try:
             logger.debug("пытаемся отправить буфер")
-            metadata = {
-                "pts": buffer.pts,
-                "dts": buffer.dts if buffer.dts != Gst.CLOCK_TIME_NONE else None,
-                "duration": (buffer.duration if buffer.duration != Gst.CLOCK_TIME_NONE else None),
-                "flags": buffer.get_flags(),
-                "size": buffer.get_size(),
-            }
 
             self.writer.write(
-                ZeroMQMessage(
-                    None,
-                    message_type=b"buffer",
-                    data=[json.dumps(metadata).encode(), map_info.data],
+                BufferMessage(
+                    pts=buffer.pts,
+                    dts=buffer.dts if buffer.dts != Gst.CLOCK_TIME_NONE else None,
+                    duration=buffer.duration if buffer.duration != Gst.CLOCK_TIME_NONE else None,
+                    width=self.width,  # type: ignore
+                    height=self.height,  # type: ignore
+                    flags=buffer.get_flags(),
+                    caps_str=self.caps_str,
+                    appmeta=None,
+                    buffer=map_info.data,
                 )
             )
             logger.debug("Отправили буфер")

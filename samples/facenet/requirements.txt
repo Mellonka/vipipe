@@ -1,0 +1,5 @@
+facenet-pytorch==2.5.2
+torch>=1.7.1
+numpy>=1.19.5
+Pillow>=8.0.0
+pyzmq>=26.3.0
