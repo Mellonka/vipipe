@@ -5,19 +5,18 @@ services:
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
       gst-launch-1.0
-        uridecodebin
-            uri=https://mooalert.ru/streams/e6b6ad8b-b828-4731-b003-615a202b7d88/master.m3u8
+        filesrc
+            location=/app/media/demo30.mp4
+        ! decodebin
         ! videoconvert
         ! videorate
-        ! video/x-raw,format=RGB,width=640,height=360,framerate=3/1
+        ! video/x-raw,framerate=2/1
         ! zmqsink
             address=ipc:///tmp/zmq_sockets/cowdetector_raw.ipc
-    depends_on:
-      - publisher
     restart: always
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
-  
+
   cowdetector:
     build: .
     command: >
@@ -31,7 +30,7 @@ services:
       - zmq_sockets:/tmp/zmq_sockets
 
   publisher:
-    build: 
+    build:
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
@@ -41,7 +40,7 @@ services:
             read-timeout=60000
         ! videoconvert
         ! videorate
-        ! video/x-raw,framerate=4/1
+        ! video/x-raw,framerate=2/1
         ! x264enc
             tune=zerolatency
         ! queue

@@ -29,5 +29,9 @@ class Drawer:
                     fill=self.text_color,
                 )
 
-    def process_polygons(self, image: Image, polygons: list) -> None:
-        raise NotImplementedError
+    def process_polygons(self, image: Image, polygons: Sequence) -> None:
+        draw = Draw(image)
+
+        for polygon in polygons:
+            draw.polygon([int(p) for p in polygon], outline=self.color, fill=None)
+            # draw.line(polygon, fill=self.color, width=self.thickness)

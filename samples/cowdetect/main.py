@@ -1,12 +1,13 @@
 import argparse
 import logging
+from typing import cast
 
 import zmq
 from PIL import Image
 from ultralytics import YOLO
-from vipipe.handlers.base import FLOW_RETURN_TYPES, HandlerABC
+from vipipe.handlers.base import HandlerABC
 from vipipe.handlers.drawer import Drawer
-from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, GstMessage, GstReader, GstWriter
+from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, BufferMessage, GstMessage, GstReader, GstWriter
 from vipipe.transport.zeromq import ZeroMQReader, ZeroMQReaderConfig, ZeroMQWriter, ZeroMQWriterConfig
 
 logger = logging.getLogger(__name__)
@@ -14,45 +15,36 @@ logging.basicConfig(level=logging.DEBUG)
 
 
 class CowDetectProcess(HandlerABC):
-    def start(self):
-        self.model = YOLO("/app/temp/model.pt")
+    model: YOLO
+    drawer: Drawer
 
-        self.drawer = Drawer(thickness=10)
-        self.reader.start()
-        self.writer.start()  # type: ignore
+    def on_startup(self):
+        self.model = YOLO("/app/temp/counting.pt")
+        self.drawer = Drawer()
 
-    def preprocess(self, message: GstMessage) -> tuple[Image.Image | None, FLOW_RETURN_TYPES | None]:
+    def handle_message(self, message: GstMessage) -> GstMessage | None:
         if message.message_type != GST_MESSAGE_TYPES.BUFFER:
-            return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
+            return message
+        message = cast(BufferMessage, message)
 
-        image = Image.frombuffer("RGB", (message.width, message.height), message.buffer)  # type: ignore
-        return image, None
-
-    def process(self, original: GstMessage, preprocessed: Image.Image) -> tuple[bytes | None, FLOW_RETURN_TYPES | None]:
+        image = Image.frombuffer("RGB", (message.width, message.height), message.buffer)
         try:
-            results = self.model.predict(preprocessed)
+            results = self.model.predict(image)
             if results is None or len(results) == 0:
-                return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
-            boxes = [result.boxes.xyxy[0] for result in results if result.boxes is not None]
-            probs = [result.probs for result in results if result.probs is not None]
+                return message
         except Exception as exc:
             logger.debug("Got error", exc_info=exc)
-            return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
+            return message
 
-        logger.debug(f"Boxes: {boxes}")
-        logger.debug(f"Probs: {probs}")
+        boxes = [result.boxes.xyxy[0] for result in results if result.boxes is not None and len(result.boxes.xyxy) > 0]
+        probs = [result.probs for result in results if result.probs is not None]
 
         if not boxes:
-            return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
+            return message
 
-        logger.debug(f"Boxes: {boxes[0][0], boxes[0][1], boxes[0][2], boxes[0][3]}")
-
-        self.drawer.process_bboxes(preprocessed, boxes, probs)
-        return preprocessed.tobytes(), None
-
-    def postprocess(self, original: GstMessage, processed: bytes) -> GstMessage | None:
-        original.buffer = processed  # type: ignore
-        return original
+        self.drawer.process_bboxes(image, boxes, probs)
+        message.buffer = image.tobytes()
+        return message
 
 
 def parse_args() -> argparse.Namespace:

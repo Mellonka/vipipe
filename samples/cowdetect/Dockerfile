@@ -24,3 +24,5 @@ WORKDIR /app
 
 ENV PYTHONPATH=/vipipe/src \
     PYTHONUNBUFFERED=1
+
+RUN ls -la /app/temp

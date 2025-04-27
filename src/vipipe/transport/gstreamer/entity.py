@@ -9,6 +9,7 @@ from vipipe.transport.interface.entity import MultipartSerializableProtocol
 class GST_MESSAGE_TYPES(IntEnum):
     CAPS = auto()
     BUFFER = auto()
+    META = auto()
     EOS = auto()
 
 
@@ -23,7 +24,7 @@ class GstMessage(MultipartSerializableProtocol):
         cls.encoded_message_type = type.value.to_bytes(1, "big")
 
     @classmethod
-    def get_cls_by_type(cls, type: GST_MESSAGE_TYPES) -> "type[GstMessage]":
+    def get_cls_by_type(cls, type: GST_MESSAGE_TYPES) -> type["GstMessage"]:
         return cls.register[type]
 
     @classmethod
@@ -116,7 +117,7 @@ class CapsMessage(GstMessage, type=GST_MESSAGE_TYPES.CAPS):
     @classmethod
     def parse(cls, parts: list[bytes] | tuple[bytes, bytes]) -> "CapsMessage":
         message_type = cls.define_message_type(parts[0])
-        if GST_MESSAGE_TYPES.CAPS != message_type:
+        if cls.message_type != message_type:
             raise ValueError(f"Invalid message type, expected: CAPS, recieved: {message_type}")
 
         return cls(**json.loads(parts[1].decode("UTF-8")))
