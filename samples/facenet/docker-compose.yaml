@@ -6,15 +6,14 @@ services:
     command: >
       gst-launch-1.0
         uridecodebin
-            uri=rtsp://admin:admin@192.168.0.109:8554/live
+            uri=rtsp://admin:admin@192.168.0.122:8554/live
         ! videoconvert
         ! videoscale
-        ! video/x-raw,format=RGB,width=640,height=480,pixel-aspect-ratio=1/1
+        ! videorate
+        ! video/x-raw,format=RGB,width=640,height=480,pixel-aspect-ratio=1/1,framerate=10/1
         ! zmqsink
-            address=ipc:///tmp/zmq_sockets/facenet_test_raw.ipc
-    depends_on:
-      - facenet
-      - publisher
+            address=ipc:///tmp/zmq_sockets/facenet_decoder.ipc
+            sync=false
     restart: always
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
@@ -24,21 +23,24 @@ services:
     build: .
     command: >
       python3 main.py
-        --reader_address ipc:///tmp/zmq_sockets/facenet_test_raw.ipc
-        --writer_address ipc:///tmp/zmq_sockets/facenet_test_processed.ipc
+        --reader_address ipc:///tmp/zmq_sockets/facenet_decoder.ipc
+        --writer_address ipc:///tmp/zmq_sockets/facenet_facenet.ipc
+    depends_on:
+      - decoder
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
       - facenet_test:/app/facenet_test
 
   publisher:
-    build: 
+    build:
       context: ../../
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
       gst-launch-1.0
         zmqsrc
-            address=ipc:///tmp/zmq_sockets/facenet_test_raw.ipc
-            read-timeout=60000
+            address=ipc:///tmp/zmq_sockets/facenet_facenet.ipc
+        ! identity
+            qos=true
         ! videoconvert
         ! x264enc
         ! hlssink2
@@ -48,6 +50,8 @@ services:
             target-duration=2
             location=/app/facenet_test/segment_%05d.ts
             playlist-location=/app/facenet_test/playlist.m3u8
+    depends_on:
+      - facenet
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
       - facenet_test:/app/facenet_test

@@ -1,4 +1,12 @@
-from .entity import GST_MESSAGE_TYPES, BufferMessage, CapsMessage, EndOfStreamMessage, GstMessage
+from .entity import (
+    GST_MESSAGE_TYPES,
+    BufferMessage,
+    BufferMetaMessage,
+    CapsMessage,
+    CustomMetaMessage,
+    EndOfStreamMessage,
+    GstMessage,
+)
 from .reader import GstReader
 from .writer import GstWriter
 
@@ -8,6 +16,8 @@ __all__ = [
     "BufferMessage",
     "EndOfStreamMessage",
     "CapsMessage",
+    "CustomMetaMessage",
+    "BufferMetaMessage",
     "GstWriter",
     "GstReader",
 ]

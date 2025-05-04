@@ -1,59 +1,45 @@
-import argparse
-import logging
-
-import zmq
 from facenet_pytorch import MTCNN
 from PIL import Image
-from vipipe.handlers.base import FLOW_RETURN_TYPES, HandlerABC
-from vipipe.handlers.drawer import Drawer
-from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, GstMessage, GstReader, GstWriter
-from vipipe.transport.zeromq import ZeroMQReader, ZeroMQReaderConfig, ZeroMQWriter, ZeroMQWriterConfig
+from vipipe.handlers import Drawer, HandlerABC
+from vipipe.logging import get_logger
+from vipipe.transport.gstreamer import BufferMessage, GstMessage, GstReader, GstWriter
+from vipipe.transport.zeromq import ZeroMQReader, ZeroMQWriter
+from vipipe.transport.zeromq.utils.cli import parse_zmq_config_cli
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logger = get_logger("vipipe.handler.facenet")
 
 
-class FacenetProcess(HandlerABC):
-    def start(self):
+class FacenetHandler(HandlerABC):
+    def on_startup(self):
         self.model = MTCNN(keep_all=True)
         self.drawer = Drawer()
-        self.reader.start()
-        self.writer.start()  # type: ignore
 
-    def preprocess(self, message: GstMessage) -> tuple[Image.Image | None, FLOW_RETURN_TYPES | None]:
-        if message.message_type != GST_MESSAGE_TYPES.BUFFER:
-            return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
+    def handle_buffer_message(self, message: BufferMessage) -> GstMessage | None:
+        if message.buffer_meta is None:
+            logger.debug("Buffer meta is None, skipping message")
+            return message
 
-        image = Image.frombuffer("RGB", (message.width, message.height), message.buffer)  # type: ignore
-        return image, None
+        image = Image.frombuffer("RGB", (message.buffer_meta.width, message.buffer_meta.height), message.buffer)
 
-    def process(self, original: GstMessage, preprocessed: Image.Image) -> tuple[bytes | None, FLOW_RETURN_TYPES | None]:
-        try:
-            boxes, probs = self.model.detect(preprocessed)  # type: ignore
-        except Exception:
-            return None, FLOW_RETURN_TYPES.WRITE_ORIGINAL
+        boxes, probs = self.model.detect(image)  # type: ignore
+        self.drawer.draw_bboxes(image, boxes, probs)  # type: ignore
 
-        self.drawer.process_bboxes(preprocessed, boxes, probs)  # type: ignore
-        return preprocessed.tobytes(), None
+        logger.debug(f"Detected {len(boxes)} faces")
 
-    def postprocess(self, original: GstMessage, processed: bytes) -> GstMessage | None:
-        original.buffer = processed  # type: ignore
-        return original
+        message.buffer = image.tobytes()
+        return message
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Запустить сервер для раздачи файлов")
-    parser.add_argument("--reader_address", type=str, help="Сокет откуда читаем кадры")
-    parser.add_argument("--writer_address", type=str, help="Сокет куда пишем отрисованные кадры")
-    return parser.parse_args()
+def main():
+    reader_config, writer_config = parse_zmq_config_cli()
 
+    reader = GstReader(ZeroMQReader(reader_config))
+    writer = GstWriter(ZeroMQWriter(writer_config))
 
-def main(reader_address: str, writer_address: str):
-    reader = GstReader(ZeroMQReader(ZeroMQReaderConfig(address=reader_address, socket_type=zmq.SocketType.SUB)))
-    writer = GstWriter(ZeroMQWriter(ZeroMQWriterConfig(address=writer_address, socket_type=zmq.SocketType.PUB)))
-    FacenetProcess(reader=reader, writer=writer).run()
+    logger.debug("Starting Facenet process")
+    FacenetHandler(reader=reader, writer=writer).run()
+    logger.debug("Facenet process finished")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args.reader_address, args.writer_address)
+    main()

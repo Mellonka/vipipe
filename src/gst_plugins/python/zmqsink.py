@@ -1,19 +1,17 @@
-import logging
-
 import gi
 import zmq
-from vipipe.transport.gstreamer import BufferMessage, CapsMessage, GstWriter
+from vipipe.logging import get_logger
+from vipipe.transport.gstreamer import BufferMessage, BufferMetaMessage, CapsMessage, CustomMetaMessage, GstWriter
 from vipipe.transport.zeromq import ZeroMQWriter, ZeroMQWriterConfig
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstBase", "1.0")
-
+gi.require_version("GObject", "2.0")
 from gi.repository import GLib, GObject, Gst, GstBase  # type: ignore
 
 Gst.init(None)
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logger = get_logger("vipipe.gst_plugins.zmqsink")
 
 
 class GstZeroMQSink(GstBase.BaseSink):
@@ -46,7 +44,7 @@ class GstZeroMQSink(GstBase.BaseSink):
             10,  # Default
             GObject.ParamFlags.READWRITE,
         ),
-        "buffer-size-oc": (
+        "buffer-size-os": (
             int,
             "OS Buffer Size",
             "Size of the OS buffer in bytes",
@@ -98,11 +96,10 @@ class GstZeroMQSink(GstBase.BaseSink):
 
     def __init__(self):
         super(GstZeroMQSink, self).__init__()
-        self.set_sync(False)
 
         self.address = ""
         self.buffer_length = 10
-        self.buffer_size_oc = 1024 * 1024 * 30
+        self.buffer_size_os = 1024 * 1024 * 30
         self.send_timeout = 100
         self.immediate = True
         self.conflate = False
@@ -125,8 +122,8 @@ class GstZeroMQSink(GstBase.BaseSink):
             return self.address
         elif prop.name == "buffer-length":
             return self.buffer_length
-        elif prop.name == "buffer-size-oc":
-            return self.buffer_size_oc
+        elif prop.name == "buffer-size-os":
+            return self.buffer_size_os
         elif prop.name == "send-timeout":
             return self.send_timeout
         elif prop.name == "immediate":
@@ -145,8 +142,8 @@ class GstZeroMQSink(GstBase.BaseSink):
             self.address = value
         elif prop.name == "buffer-length":
             self.buffer_length = value
-        elif prop.name == "buffer-size-oc":
-            self.buffer_size_oc = value
+        elif prop.name == "buffer-size-os":
+            self.buffer_size_os = value
         elif prop.name == "send-timeout":
             self.send_timeout = value
         elif prop.name == "immediate":
@@ -170,7 +167,7 @@ class GstZeroMQSink(GstBase.BaseSink):
                     address=self.address,
                     socket_type=zmq.SocketType.PUB,
                     buffer_length=self.buffer_length,
-                    buffer_size_oc=self.buffer_size_oc,
+                    buffer_size_os=self.buffer_size_os,
                     send_timeout=self.send_timeout,
                     immediate=self.immediate,
                     conflate=self.conflate,
@@ -244,34 +241,50 @@ class GstZeroMQSink(GstBase.BaseSink):
 
     def do_render(self, buffer):
         if self.writer is None:
+            logger.error("Сокет для публикации не инициализирован")
             return Gst.FlowReturn.ERROR
 
         success, map_info = buffer.map(Gst.MapFlags.READ)
         if not success:
+            logger.error("Ошибка при чтении буфера")
             return Gst.FlowReturn.ERROR
 
         try:
-            logger.debug("пытаемся отправить буфер")
+            # Извлекаем пользовательские метаданные, если они есть
+            custom_meta_data = buffer.get_custom_meta("VipipeCustomMeta") or None
+            logger.info(f"custom_meta_data: {custom_meta_data}")
+            custom_meta_data = custom_meta_data and custom_meta_data.get_structure().get_value("vipipe_custom_meta")
+            logger.info(f"custom_meta_data: {custom_meta_data}")
+            custom_meta = custom_meta_data and CustomMetaMessage.from_json(custom_meta_data)
 
-            self.writer.write(
-                BufferMessage(
-                    pts=buffer.pts,
-                    dts=buffer.dts if buffer.dts != Gst.CLOCK_TIME_NONE else None,
-                    duration=buffer.duration if buffer.duration != Gst.CLOCK_TIME_NONE else None,
-                    width=self.width,  # type: ignore
-                    height=self.height,  # type: ignore
-                    flags=buffer.get_flags(),
-                    caps_str=self.caps_str,
-                    appmeta=None,
-                    buffer=map_info.data,
-                )
+            buffer_meta = BufferMetaMessage(
+                pts=buffer.pts,
+                dts=buffer.dts if buffer.dts != Gst.CLOCK_TIME_NONE else None,
+                duration=buffer.duration if buffer.duration != Gst.CLOCK_TIME_NONE else None,
+                width=self.width,  # type: ignore
+                height=self.height,  # type: ignore
+                flags=buffer.get_flags(),
+                caps_str=self.caps_str,
             )
-            logger.debug("Отправили буфер")
 
+            buffer_message = BufferMessage(
+                buffer=bytes(map_info.data),
+                buffer_meta=buffer_meta,
+                custom_meta=custom_meta,
+            )
+
+            self.writer.write(buffer_message)
+            logger.debug("Буфер отправлен")
+
+            return Gst.FlowReturn.OK
+        except zmq.Again:
+            logger.warning("Передача буфера отклонена (zmq.Again)")
+            return Gst.FlowReturn.OK
+        except Exception as e:
+            logger.error("Ошибка публикации буфера: %s", e)
+            return Gst.FlowReturn.ERROR
         finally:
             buffer.unmap(map_info)
-
-        return Gst.FlowReturn.OK
 
 
 # register plugin

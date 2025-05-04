@@ -18,7 +18,7 @@ class ZeroMQReaderConfig:
     buffer_length: int = 10
     """Максимальное количество сообщений в очереди"""
 
-    buffer_size_oc: int = 1024 * 1024 * 30
+    buffer_size_os: int = 1024 * 1024 * 30
     """Размер буфера ОС (в байтах). По умолчанию 30 МБ"""
 
     read_timeout: int = 100
@@ -53,7 +53,7 @@ class ZeroMQReader(MultipartReaderABC[bytes]):
             self.socket.setsockopt(zmq.SUBSCRIBE, self.config.topic.encode() or b"")
 
         self.socket.setsockopt(zmq.RCVHWM, self.config.buffer_length)
-        self.socket.setsockopt(zmq.RCVBUF, self.config.buffer_size_oc)
+        self.socket.setsockopt(zmq.RCVBUF, self.config.buffer_size_os)
         self.socket.setsockopt(zmq.RCVTIMEO, self.config.read_timeout)
         self.socket.setsockopt(zmq.CONFLATE, self.config.conflate)
 

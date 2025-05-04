@@ -1,18 +1,18 @@
-import logging
-
 import gi
 import zmq
+from vipipe.logging import get_logger
 from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, BufferMessage, GstReader
 from vipipe.transport.zeromq import ZeroMQReader, ZeroMQReaderConfig
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstBase", "1.0")
+gi.require_version("GObject", "2.0")
 from gi.repository import GLib, GObject, Gst, GstBase  # type: ignore
 
 Gst.init(None)
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+
+logger = get_logger("vipipe.gst_plugins.zmqsrc")
 
 
 class GstZeroMQSrc(GstBase.BaseSrc):
@@ -45,7 +45,7 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             10,  # Default
             GObject.ParamFlags.READWRITE,
         ),
-        "buffer-size-oc": (
+        "buffer-size-os": (
             int,
             "OS Buffer Size",
             "Size of the OS buffer in bytes",
@@ -86,7 +86,7 @@ class GstZeroMQSrc(GstBase.BaseSrc):
 
         self.address = ""
         self.buffer_length = 10
-        self.buffer_size_oc = 1024 * 1024 * 30
+        self.buffer_size_os = 1024 * 1024 * 30
         self.read_timeout = 5000
         self.conflate = False
         self.dontwait = False
@@ -110,8 +110,8 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             return self.address
         elif prop.name == "buffer-length":
             return self.buffer_length
-        elif prop.name == "buffer-size-oc":
-            return self.buffer_size_oc
+        elif prop.name == "buffer-size-os":
+            return self.buffer_size_os
         elif prop.name == "read-timeout":
             return self.read_timeout
         elif prop.name == "conflate":
@@ -126,8 +126,8 @@ class GstZeroMQSrc(GstBase.BaseSrc):
             self.address = value
         elif prop.name == "buffer-length":
             self.buffer_length = value
-        elif prop.name == "buffer-size-oc":
-            self.buffer_size_oc = value
+        elif prop.name == "buffer-size-os":
+            self.buffer_size_os = value
         elif prop.name == "read-timeout":
             self.read_timeout = value
         elif prop.name == "conflate":
@@ -147,7 +147,7 @@ class GstZeroMQSrc(GstBase.BaseSrc):
                     address=self.address,
                     socket_type=zmq.SocketType.SUB,
                     buffer_length=self.buffer_length,
-                    buffer_size_oc=self.buffer_size_oc,
+                    buffer_size_os=self.buffer_size_os,
                     read_timeout=self.read_timeout,
                     conflate=self.conflate,
                 )
@@ -204,20 +204,30 @@ class GstZeroMQSrc(GstBase.BaseSrc):
     def handle_buffer_message(self, message: BufferMessage):
         logger.debug("Получили буффер размера %d", len(message.buffer))
 
-        if message.caps_str and message.caps_str != self.caps_str:
-            self._parse_caps(message.caps_str)
+        assert message.buffer_meta is not None, "Buffer is None"
+
+        if message.buffer_meta.caps_str and message.buffer_meta.caps_str != self.caps_str:
+            self._parse_caps(message.buffer_meta.caps_str)
 
         buffer = Gst.Buffer.new_allocate(None, len(message.buffer), None)
         if buffer is None:
             return Gst.FlowReturn.ERROR, None
 
-        buffer.pts = message.pts
-        if message.dts is not None:
-            buffer.dts = message.dts
-        if message.duration is not None:
-            buffer.duration = message.duration
-        if message.flags is not None:
-            buffer.set_flags(Gst.BufferFlags(message.flags))
+        buffer.pts = message.buffer_meta.pts
+        if message.buffer_meta.dts is not None:
+            buffer.dts = message.buffer_meta.dts
+        if message.buffer_meta.duration is not None:
+            buffer.duration = message.buffer_meta.duration
+        if message.buffer_meta.flags is not None:
+            buffer.set_flags(Gst.BufferFlags(message.buffer_meta.flags))
+
+        # Добавляем пользовательские метаданные, если они есть
+        if message.custom_meta is not None:
+            custom_meta = buffer.add_custom_meta("VipipeCustomMeta")
+            struct = custom_meta.get_structure()
+            struct.set_value("vipipe_custom_meta", message.custom_meta.to_json())
+            logger.info(f"structure: {struct.to_string()}")
+            logger.info(f"custom_meta: {custom_meta}")
 
         buffer.fill(0, message.buffer)
         return Gst.FlowReturn.OK, buffer
@@ -226,15 +236,15 @@ class GstZeroMQSrc(GstBase.BaseSrc):
         if self.reader is None:
             return Gst.FlowReturn.ERROR
 
-        logger.debug("Пытаемся получить сообщение")
+        logger.debug("Trying to read message from ZeroMQ")
 
         while True:
             message = self.reader.read()
             if message is None:
-                logger.debug("Не получили сообщение пробуем снова")
+                logger.debug("No message received")
                 continue
 
-            match message.message_type:
+            match message.MESSAGE_TYPE:
                 case GST_MESSAGE_TYPES.BUFFER:
                     return self.handle_buffer_message(message)  # type: ignore
                 case GST_MESSAGE_TYPES.CAPS:
@@ -242,7 +252,7 @@ class GstZeroMQSrc(GstBase.BaseSrc):
                 case GST_MESSAGE_TYPES.EOS:
                     return Gst.FlowReturn.EOS, None
                 case _:
-                    logger.debug("Неизветсный тип сообщения, пропускаем")
+                    logger.debug("Got message type %s", message.MESSAGE_TYPE)
 
 
 # register plugin

@@ -20,9 +20,14 @@ RUN apk add --no-cache \
     vim \
     screen
 
-# Создание и активация виртуального окружения
-RUN python3 -m venv /.venv
-ENV PATH="/.venv/bin:$PATH"
+# Копируем исходный код библиотеки GstCustomMeta
+COPY src/gst_plugins/c /tmp/gst_plugins_c
+
+# Компилируем и устанавливаем библиотеку GstCustomMeta
+RUN cd /tmp/gst_plugins_c && \
+    make && \
+    make install && \
+    ldconfig 2>/dev/null || echo "Alpine не имеет ldconfig"
 
 # Копирование файлов и установка зависимостей Python
 COPY requirements.txt .

@@ -1,20 +1,16 @@
-import argparse
-import logging
-from typing import cast
-
-import zmq
 from PIL import Image
 from ultralytics import YOLO
 from vipipe.handlers.base import HandlerABC
 from vipipe.handlers.drawer import Drawer
-from vipipe.transport.gstreamer import GST_MESSAGE_TYPES, BufferMessage, GstMessage, GstReader, GstWriter
-from vipipe.transport.zeromq import ZeroMQReader, ZeroMQReaderConfig, ZeroMQWriter, ZeroMQWriterConfig
+from vipipe.logging import get_logger
+from vipipe.transport.gstreamer import BufferMessage, GstMessage, GstReader, GstWriter
+from vipipe.transport.zeromq import ZeroMQReader, ZeroMQWriter
+from vipipe.transport.zeromq.utils.cli import parse_zmq_config_cli
 
-logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
+logger = get_logger("vipipe.handler.cowdetect")
 
 
-class CowDetectProcess(HandlerABC):
+class CowDetectHandler(HandlerABC):
     model: YOLO
     drawer: Drawer
 
@@ -22,15 +18,16 @@ class CowDetectProcess(HandlerABC):
         self.model = YOLO("/app/temp/counting.pt")
         self.drawer = Drawer()
 
-    def handle_message(self, message: GstMessage) -> GstMessage | None:
-        if message.message_type != GST_MESSAGE_TYPES.BUFFER:
+    def handle_buffer_message(self, message: BufferMessage) -> GstMessage | None:
+        if message.buffer_meta is None:
+            logger.debug("Buffer meta is None, skipping message")
             return message
-        message = cast(BufferMessage, message)
 
-        image = Image.frombuffer("RGB", (message.width, message.height), message.buffer)
+        image = Image.frombuffer("RGB", (message.buffer_meta.width, message.buffer_meta.height), message.buffer)
         try:
             results = self.model.predict(image)
             if results is None or len(results) == 0:
+                logger.debug("No results from model, skipping message")
                 return message
         except Exception as exc:
             logger.debug("Got error", exc_info=exc)
@@ -42,24 +39,24 @@ class CowDetectProcess(HandlerABC):
         if not boxes:
             return message
 
-        self.drawer.process_bboxes(image, boxes, probs)
+        self.drawer.draw_bboxes(image, boxes, probs)
+
         message.buffer = image.tobytes()
         return message
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Запустить сервер для раздачи файлов")
-    parser.add_argument("--reader_address", type=str, help="Сокет откуда читаем кадры")
-    parser.add_argument("--writer_address", type=str, help="Сокет куда пишем отрисованные кадры")
-    return parser.parse_args()
+def main():
+    reader_config, writer_config = parse_zmq_config_cli()
+    logger.debug("Reader config: %s", reader_config)
+    logger.debug("Writer config: %s", writer_config)
 
+    reader = GstReader(ZeroMQReader(reader_config))
+    writer = GstWriter(ZeroMQWriter(writer_config))
 
-def main(reader_address: str, writer_address: str):
-    reader = GstReader(ZeroMQReader(ZeroMQReaderConfig(address=reader_address, socket_type=zmq.SocketType.SUB)))
-    writer = GstWriter(ZeroMQWriter(ZeroMQWriterConfig(address=writer_address, socket_type=zmq.SocketType.PUB)))
-    CowDetectProcess(reader=reader, writer=writer).run()
+    logger.debug("Starting CowDetectProcess")
+    CowDetectHandler(reader=reader, writer=writer).run()
+    logger.debug("CowDetectProcess finished")
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args.reader_address, args.writer_address)
+    main()

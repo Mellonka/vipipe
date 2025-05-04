@@ -5,14 +5,14 @@ services:
       dockerfile: docker/Dockerfile.ubuntu.gstreamer
     command: >
       gst-launch-1.0 
-        rtspsrc 
+        rtspsrc
             location=rtsp://admin:admin@192.168.0.156:8554/live  
-            latency=0 
+            latency=0
         ! rtph264depay
         ! h264parse
         ! avdec_h264
         ! videoconvert
-        ! zmqsink 
+        ! zmqsink
             address=ipc:///tmp/zmq_sockets/rtsp_test.ipc
     restart: always
     volumes:

@@ -3,6 +3,9 @@
 .idea/
 tmp/
 temp/
+.DS_Store
+.cursorrules
+.cursorignore
 
 # Python-generated files
 __pycache__/
