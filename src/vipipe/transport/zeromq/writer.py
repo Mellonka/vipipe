@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Literal
 
 import zmq
 from vipipe.transport.interface import MultipartWriterABC
@@ -10,13 +9,13 @@ class ZeroMQWriterConfig:
     address: str
     """Адрес сокета"""
 
-    socket_type: Literal[zmq.SocketType.PUB, zmq.SocketType.PUSH]
+    socket_type: zmq.SocketType
     """Тип публикации (PUB - получат все клиенты, PUSH - равномерное распеределение между клиентами)"""
 
     buffer_length: int = 10
     """Максимальное количество сообщений в очереди"""
 
-    buffer_size_oc: int = 1024 * 1024 * 30
+    buffer_size_os: int = 1024 * 1024 * 30
     """Размер буфера ОС (в байтах). По умолчанию 30 МБ"""
 
     send_timeout: int = 10
@@ -51,7 +50,7 @@ class ZeroMQWriter(MultipartWriterABC[bytes]):
         self.socket = self.context.socket(self.config.socket_type)
 
         self.socket.setsockopt(zmq.SNDHWM, self.config.buffer_length)
-        self.socket.setsockopt(zmq.SNDBUF, self.config.buffer_size_oc)
+        self.socket.setsockopt(zmq.SNDBUF, self.config.buffer_size_os)
         self.socket.setsockopt(zmq.SNDTIMEO, self.config.send_timeout)
         self.socket.setsockopt(zmq.IMMEDIATE, self.config.immediate)
         self.socket.setsockopt(zmq.CONFLATE, self.config.conflate)

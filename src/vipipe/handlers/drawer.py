@@ -11,7 +11,7 @@ class Drawer:
     text_color: tuple[int, int, int] = (255, 255, 255)
     thickness: int = 2
 
-    def process_bboxes(self, image: Image, bboxes: Sequence, confs: Sequence | None = None) -> None:
+    def draw_bboxes(self, image: Image, bboxes: Sequence, confs: Sequence | None = None) -> None:
         draw = Draw(image)
 
         if confs is None or len(confs) != len(bboxes):
@@ -29,7 +29,7 @@ class Drawer:
                     fill=self.text_color,
                 )
 
-    def process_polygons(self, image: Image, polygons: Sequence) -> None:
+    def render_polygons(self, image: Image, polygons: Sequence) -> None:
         draw = Draw(image)
 
         for polygon in polygons:

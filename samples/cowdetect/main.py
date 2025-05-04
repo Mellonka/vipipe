@@ -23,7 +23,7 @@ class CowDetectProcess(HandlerABC):
         self.drawer = Drawer()
 
     def handle_message(self, message: GstMessage) -> GstMessage | None:
-        if message.message_type != GST_MESSAGE_TYPES.BUFFER:
+        if message.MESSAGE_TYPE != GST_MESSAGE_TYPES.BUFFER:
             return message
         message = cast(BufferMessage, message)
 
@@ -42,7 +42,7 @@ class CowDetectProcess(HandlerABC):
         if not boxes:
             return message
 
-        self.drawer.process_bboxes(image, boxes, probs)
+        self.drawer.draw_bboxes(image, boxes, probs)
         message.buffer = image.tobytes()
         return message
 
@@ -51,6 +51,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Запустить сервер для раздачи файлов")
     parser.add_argument("--reader_address", type=str, help="Сокет откуда читаем кадры")
     parser.add_argument("--writer_address", type=str, help="Сокет куда пишем отрисованные кадры")
+
     return parser.parse_args()
 
 

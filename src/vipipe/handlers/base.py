@@ -1,19 +1,19 @@
-from __future__ import annotations
-
 from abc import ABC
 from dataclasses import dataclass
-from enum import IntEnum, auto
 
-from vipipe.transport.gstreamer.entity import GstMessage
-from vipipe.transport.gstreamer.reader import GstReader
-from vipipe.transport.gstreamer.writer import GstWriter
+from vipipe.logging import get_logger
+from vipipe.transport.gstreamer import (
+    BufferMessage,
+    BufferMetaMessage,
+    CapsMessage,
+    CustomMetaMessage,
+    EndOfStreamMessage,
+    GstMessage,
+    GstReader,
+    GstWriter,
+)
 
-
-class FLOW_RETURN_TYPES(IntEnum):
-    SKIP = auto()
-    STOP = auto()
-    WRITE_ORIGINAL = auto()
-    NEW_BUFFER = auto()
+logger = get_logger("vipipe.handler")
 
 
 @dataclass
@@ -47,8 +47,35 @@ class HandlerABC(ABC):
         self.on_shutdown()
         self.is_running = False
 
+    def handle_buffer_message(self, message: BufferMessage) -> GstMessage | None:
+        return message
+
+    def handle_custom_meta_message(self, message: CustomMetaMessage) -> GstMessage | None:
+        return message
+
+    def handle_buffer_meta_message(self, message: BufferMetaMessage) -> GstMessage | None:
+        return message
+
+    def handle_caps_message(self, message: CapsMessage) -> GstMessage | None:
+        return message
+
+    def handle_eos_message(self, message: EndOfStreamMessage) -> GstMessage | None:
+        self.set_stop()
+        return message
+
     def handle_message(self, message: GstMessage) -> GstMessage | None:
-        raise NotImplementedError
+        if message.MESSAGE_TYPE == EndOfStreamMessage.MESSAGE_TYPE:
+            return self.handle_eos_message(message)  # type: ignore
+        if message.MESSAGE_TYPE == CapsMessage.MESSAGE_TYPE:
+            return self.handle_caps_message(message)  # type: ignore
+        if message.MESSAGE_TYPE == BufferMessage.MESSAGE_TYPE:
+            return self.handle_buffer_message(message)  # type: ignore
+        if message.MESSAGE_TYPE == CustomMetaMessage.MESSAGE_TYPE:
+            return self.handle_custom_meta_message(message)  # type: ignore
+        if message.MESSAGE_TYPE == BufferMetaMessage.MESSAGE_TYPE:
+            return self.handle_buffer_meta_message(message)  # type: ignore
+
+        raise ValueError(f"Unknown message type: {message.MESSAGE_TYPE}")
 
     def run(self) -> None:
         self._start()
@@ -65,5 +92,8 @@ class HandlerABC(ABC):
 
                 if not self.is_running:
                     break
+        except Exception as exc:
+            logger.error(f"Error in handler: {exc}")
+            raise
         finally:
             self._stop()

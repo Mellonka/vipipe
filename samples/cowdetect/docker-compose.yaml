@@ -8,12 +8,14 @@ services:
         filesrc
             location=/app/media/demo30.mp4
         ! decodebin
-        ! videoconvert
         ! videorate
-        ! video/x-raw,framerate=2/1
+        ! video/x-raw,framerate=1/1
+        ! videoconvert
+        ! video/x-raw,format=RGB
         ! zmqsink
             address=ipc:///tmp/zmq_sockets/cowdetector_raw.ipc
-    restart: always
+            send-timeout=5000
+            sync=true
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
 
@@ -39,20 +41,18 @@ services:
             address=ipc:///tmp/zmq_sockets/cowdetector_processed.ipc
             read-timeout=60000
         ! videoconvert
-        ! videorate
-        ! video/x-raw,framerate=2/1
-        ! x264enc
+        ! x265enc
             tune=zerolatency
-        ! queue
-            leaky=downstream
-            max-size-time=2000000000
-        ! hlssink2
-            playlist-root=http://localhost:8083/
-            max-files=2
-            playlist-length=2
-            target-duration=2
-            location=/app/cowdetector/segment_%05d.ts
-            playlist-location=/app/cowdetector/playlist.m3u8
+            key-int-max=5
+            speed-preset=ultrafast
+        ! h265parse
+        ! splitmuxsink
+            muxer=mp4mux
+            location=/app/cowdetector/segment_%05d.mp4
+            max-size-time=5000000000
+            send-keyframe-requests=true
+    depends_on:
+      - cowdetector
     volumes:
       - zmq_sockets:/tmp/zmq_sockets
       - cowdetector:/app/cowdetector
