@@ -274,7 +274,7 @@ class GstZeroMQSink(GstBase.BaseSink):
             )
 
             self.writer.write(buffer_message)
-            logger.debug("Буфер отправлен")
+            logger.debug("Буфер отправлен pts: %d", buffer_meta.pts)
 
             return Gst.FlowReturn.OK
         except zmq.Again:

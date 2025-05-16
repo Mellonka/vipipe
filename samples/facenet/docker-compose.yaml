@@ -1,8 +1,6 @@
 services:
   decoder:
-    build:
-      context: ../../
-      dockerfile: docker/Dockerfile.ubuntu.gstreamer
+    build: mellonka/vipipe:0.1.0-ubuntu22.04
     command: >
       gst-launch-1.0
         uridecodebin
@@ -32,15 +30,11 @@ services:
       - facenet_test:/app/facenet_test
 
   publisher:
-    build:
-      context: ../../
-      dockerfile: docker/Dockerfile.ubuntu.gstreamer
+    build: mellonka/vipipe:0.1.0-ubuntu22.04
     command: >
       gst-launch-1.0
         zmqsrc
             address=ipc:///tmp/zmq_sockets/facenet_facenet.ipc
-        ! identity
-            qos=true
         ! videoconvert
         ! x264enc
         ! hlssink2
