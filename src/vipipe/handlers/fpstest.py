@@ -1,6 +1,7 @@
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Optional
+from collections import deque
 
 from vipipe.handlers.base import HandlerABC
 from vipipe.logging import get_logger
@@ -13,19 +14,19 @@ logger = get_logger("vipipe.handler.fpstest")
 class FPSCounter:
     """Класс для подсчета FPS (кадров в секунду)."""
 
-    window_size: int = 10000
-    timestamps: List[float] = field(default_factory=list)
+    window_size: int = 500
+    timestamps: deque[float] = field(default_factory=deque)
     last_fps_report_time: float = field(default_factory=time.time)
     report_interval: float = 1.0
 
     def update(self) -> None:
         """Обновляет список временных меток для расчета FPS."""
-        current_time = time.time()
+        current_time = time.monotonic()
         self.timestamps.append(current_time)
 
         # Ограничиваем размер списка временных меток
-        if len(self.timestamps) > self.window_size:
-            self.timestamps = self.timestamps[-self.window_size :]
+        while len(self.timestamps) > self.window_size:
+            self.timestamps.popleft()
 
     def get_fps(self) -> float:
         """Рассчитывает текущий FPS на основе временных меток."""
